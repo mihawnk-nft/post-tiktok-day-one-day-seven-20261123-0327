@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Star Catch — a tiny agent-built game</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0b1026; height: 100%; overflow: hidden; }
+  canvas { display: block; margin: 0 auto; touch-action: none; }
+  #hint { position: fixed; left: 0; right: 0; bottom: 10px; text-align: center;
+          color: #8b93b8; font: 14px system-ui, sans-serif; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="game" width="540" height="960"></canvas>
+<div id="hint">Move: arrow keys / mouse / touch &mdash; catch the falling stars</div>
+<script>
+// Star Catch — a tiny game built by an AI agent on make.fun.
+// Day 1: one star, one basket, a score. Nothing else.
+// Day 7 (?day=7): same map, same start — plus a sky full of stars,
+// combos, particles, hearts and a golden power-up star.
+// The video for the "Day one, day seven" bounty shows both versions.
+'use strict';
+
+const params = new URLSearchParams(location.search);
+const DAY = params.get('day') === '7' ? 7 : 1;
+
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const GROUND_Y = H - 120;
+
+const basket = { x: W / 2, y: GROUND_Y, w: 120, h: 26, speed: 9 };
+let score = 0, combo = 0, bestCombo = 0, lives = 3;
+let stars = [];
+let particles = [];
+let keys = {};
+
+function starColor(i) {
+  return ['#ffd23f', '#ff5d8f', '#4dd7ff'][i % 3];
+}
+
+function spawnStar(i, y) {
+  return {
+    x: 60 + Math.random() * (W - 120),
+    y: y !== undefined ? y : -30 - Math.random() * 200,
+    r: 20,
+    vy: DAY === 7 ? 4.2 + Math.random() * 2.4 : 3.2,
+    golden: DAY === 7 && Math.random() < 0.12,
+    color: starColor(i),
+    spin: Math.random() * Math.PI * 2,
+  };
+}
+
+function resetStars() {
+  const n = DAY === 7 ? 3 : 1;
+  stars = [];
+  for (let i = 0; i < n; i++) stars.push(spawnStar(i, -40 - i * 260));
+}
+
+function drawStar(cx, cy, r, color, rot) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rot);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const ang = (i * Math.PI) / 5 - Math.PI / 2;
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(ang) * rad, Math.sin(ang) * rad);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function burst(x, y, color) {
+  for (let i = 0; i < 14; i++) {
+    const a = Math.random() * Math.PI * 2;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * (2 + Math.random() * 5),
+      vy: Math.sin(a) * (2 + Math.random() * 5) - 2,
+      life: 1, color,
+    });
+  }
+}
+
+function drawSky(t) {
+  if (DAY === 1) {
+    ctx.fillStyle = '#0b1026';
+    ctx.fillRect(0, 0, W, H);
+    return;
+  }
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#1b1040');
+  g.addColorStop(0.6, '#3b1d6e');
+  g.addColorStop(1, '#0b1026');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 40; i++) {
+    const x = (i * 137.5) % W;
+    const y = (i * 89.3) % (H * 0.7);
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(t / 500 + i));
+    ctx.globalAlpha = tw * 0.8;
+    ctx.fillRect(x, y, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawBasket() {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.roundRect(basket.x - basket.w / 2, basket.y, basket.w, basket.h, 10);
+  ctx.fill();
+  ctx.fillStyle = '#ffd23f';
+  ctx.fillRect(basket.x - basket.w / 2 + 8, basket.y + 6, basket.w - 16, 5);
+}
+
+function drawHud() {
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('SCORE ' + score, 24, 52);
+  ctx.textAlign = 'right';
+  ctx.fillText(DAY === 7 ? 'DAY 7' : 'DAY 1', W - 24, 52);
+  ctx.textAlign = 'left';
+  if (DAY === 7) {
+    ctx.font = 'bold 28px system-ui, sans-serif';
+    ctx.fillStyle = '#ffd23f';
+    ctx.fillText(combo > 1 ? 'COMBO x' + combo : '', 24, 96);
+    ctx.fillStyle = '#ff5d8f';
+    let hearts = '';
+    for (let i = 0; i < lives; i++) hearts += '\u2665 ';
+    ctx.fillText(hearts, 24, H - 24);
+    ctx.fillStyle = '#8b93b8';
+    ctx.font = '22px system-ui, sans-serif';
+    ctx.fillText('best combo x' + bestCombo, 24, 132);
+  }
+}
+
+function step(t) {
+  if (keys.ArrowLeft || keys.a) basket.x -= basket.speed;
+  if (keys.ArrowRight || keys.d) basket.x += basket.speed;
+  basket.x = Math.max(basket.w / 2, Math.min(W - basket.w / 2, basket.x));
+
+  drawSky(t);
+  for (const s of stars) {
+    s.y += s.vy;
+    s.spin += 0.03;
+    drawStar(s.x, s.y, s.golden ? 28 : s.r, s.golden ? '#ffe98a' : s.color, s.spin);
+    const caught = s.y + s.r >= basket.y && s.y < basket.y + basket.h + 10
+      && Math.abs(s.x - basket.x) < basket.w / 2 + s.r * 0.6;
+    if (caught) {
+      score += s.golden ? 5 : 1;
+      combo += 1;
+      bestCombo = Math.max(bestCombo, combo);
+      if (DAY === 7) burst(s.x, basket.y, s.color);
+      Object.assign(s, spawnStar(stars.indexOf(s)));
+    } else if (s.y - s.r > H) {
+      combo = 0;
+      if (DAY === 7) {
+        lives -= 1;
+        if (lives <= 0) { score = 0; lives = 3; combo = 0; }
+      }
+      Object.assign(s, spawnStar(stars.indexOf(s)));
+    }
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.03;
+    if (p.life <= 0) { particles.splice(i, 1); continue; }
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5 * p.life + 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  drawBasket();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, GROUND_Y + basket.h + 14, W, 4);
+  drawHud();
+  requestAnimationFrame(step);
+}
+
+addEventListener('keydown', (e) => { keys[e.key] = true; });
+addEventListener('keyup', (e) => { keys[e.key] = false; });
+cv.addEventListener('pointermove', (e) => {
+  const r = cv.getBoundingClientRect();
+  basket.x = (e.clientX - r.left) * (W / r.width);
+});
+
+resetStars();
+requestAnimationFrame(step);
+</script>
+</body>
+</html>
