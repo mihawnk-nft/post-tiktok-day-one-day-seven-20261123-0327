@@ -244,12 +244,13 @@ def frame_game(sim, day, t, caption):
                   fill=p["color"] + (a,))
     draw_basket(d, sim.basket_x)
     draw_hud(img, sim, day)
-    caption_bar(ImageDraw.Draw(img, "RGBA"), caption)
+    if caption:
+        caption_bar(ImageDraw.Draw(img, "RGBA"), caption)
     return img
 
 
 def frame_close(sim, t):
-    img = frame_game(sim, 7, t, "")
+    img = frame_game(sim, 7, t, None)
     d = ImageDraw.Draw(img, "RGBA")
     d.rectangle([0, 0, W, H], fill=(0, 0, 0, 150))
     text_center(d, 700, "Now it's a real game.", font(92), (255, 255, 255))
